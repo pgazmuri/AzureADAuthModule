@@ -1,8 +1,0 @@
-C:\repos\AzureADAuthModule\obj\Debug\AzureADAuthModule.csprojAssemblyReference.cache
-C:\repos\AzureADAuthModule\obj\Debug\AzureADAuthModule.csproj.CoreCompileInputs.cache
-C:\repos\AzureADAuthModule\bin\Debug\AzureADAuthModule.dll
-C:\repos\AzureADAuthModule\bin\Debug\AzureADAuthModule.pdb
-C:\repos\AzureADAuthModule\obj\Debug\AzureADAuthModule.dll
-C:\repos\AzureADAuthModule\obj\Debug\AzureADAuthModule.pdb
-C:\repos\AzureADAuthModule\bin\Debug\Newtonsoft.Json.dll
-C:\repos\AzureADAuthModule\obj\Debug\AzureADAuthModule.csproj.CopyComplete
