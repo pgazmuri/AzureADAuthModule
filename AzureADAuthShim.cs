@@ -51,7 +51,7 @@ namespace AzureADAuthModule
         {
             if (HttpContext.Current.Session["AzureADAuthShim_Identity"] != null)
             {
-                HttpContext.Current.Request.Headers.Add(HttpHeaderName, HttpContext.Current.Session["AzureADAuthShim_Identity"].ToString());
+                HttpContext.Current.Request.Headers[HttpHeaderName] = HttpContext.Current.Session["AzureADAuthShim_Identity"].ToString();
             }
             else
             {
@@ -65,38 +65,32 @@ namespace AzureADAuthModule
                     //check posted variable for code
                     if (HttpContext.Current.Request.QueryString["code"] != null)
                     {
+                        string accessToken = GetAccessToken();
+                        /*string jwtClaims = accessToken.Split(new char[] { '.' })[1];
 
-                        var values = new Dictionary<string, string>
-                    {
-                        {"client_id", ClientId},
-                        {"client_secret",  ClientSecret},
-                        {"scope", "openid" },
-                        {"redirect_uri", LoginUrl },
-                        {"code", HttpContext.Current.Request.QueryString["code"] },
-                        {"grant_Type", "authorization_code" }
-                    };
-
-                        var content = new FormUrlEncodedContent(values);
-
-                        var response = client.PostAsync($"https://login.microsoftonline.com/{TenantId}/oauth2/v2.0/token", content).GetAwaiter().GetResult();
-
-                        var sJSON = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-                        JObject r = JObject.Parse(sJSON);
-                        string accessToken = r["access_token"].Value<string>();
-                        string jwtClaims = accessToken.Split(new char[] { '.' })[1];
-                        
                         //this is dumb, but...
-                        while(jwtClaims.Length % 4 != 0)
+                        while (jwtClaims.Length % 4 != 0)
                         {
                             jwtClaims += "=";
                         }
 
                         JObject claims = JObject.Parse(System.Text.UnicodeEncoding.UTF8.GetString(System.Convert.FromBase64String(jwtClaims)));
                         string upn = claims[ADPropertyName].Value<string>();
+                        */
+
+                        JObject profile;
+                        HttpResponseMessage response;
+                        lock (client)
+                        {
+                            client.DefaultRequestHeaders.Add("Authorization", $"Bearer {accessToken}");
+                            response = client.GetAsync("https://graph.microsoft.com/beta/me").GetAwaiter().GetResult();
+                            client.DefaultRequestHeaders.Remove("Authorization");
+                        }
+                        profile = JObject.Parse(response.Content.ReadAsStringAsync().GetAwaiter().GetResult());
 
 
                         //get UPN and set in session
-                        HttpContext.Current.Session["AzureADAuthShim_Identity"] = upn;
+                        HttpContext.Current.Session["AzureADAuthShim_Identity"] = profile[ADPropertyName].Value<string>();
                         HttpContext.Current.Request.Headers.Add(HttpHeaderName, HttpContext.Current.Session["AzureADAuthShim_Identity"].ToString());
 
                         //redirect to "state"
@@ -118,6 +112,30 @@ namespace AzureADAuthModule
                     HttpContext.Current.Response.End();
                 }
             }
+        }
+
+        private static string GetAccessToken()
+        {
+            var values = new Dictionary<string, string>
+                    {
+                        {"client_id", ClientId},
+                        {"client_secret",  ClientSecret},
+                        {"scope", "openid" },
+                        {"redirect_uri", LoginUrl },
+                        {"code", HttpContext.Current.Request.QueryString["code"] },
+                        {"grant_Type", "authorization_code" }
+                    };
+
+            var content = new FormUrlEncodedContent(values);
+            HttpResponseMessage response;
+            lock (client)
+            {
+                response = client.PostAsync($"https://login.microsoftonline.com/{TenantId}/oauth2/v2.0/token", content).GetAwaiter().GetResult();
+            }
+            var sJSON = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+            JObject r = JObject.Parse(sJSON);
+            string accessToken = r["access_token"].Value<string>();
+            return accessToken;
         }
 
         private void EnsureInitialized()
