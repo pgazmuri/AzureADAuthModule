@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
 using System.Security;
 using System.Text;
@@ -156,12 +157,16 @@ namespace AzureADAuthModule
         private static async Task<JObject> GetProfile(string accessToken)
         {
             JObject profile;
-            HttpResponseMessage response;
-            client.DefaultRequestHeaders.Add("Authorization", $"Bearer {accessToken}");
-            response = await client.GetAsync("https://graph.microsoft.com/beta/me");
-            client.DefaultRequestHeaders.Remove("Authorization");
-            
-            profile = JObject.Parse(await response.Content.ReadAsStringAsync());
+
+            using (var requestMessage = new HttpRequestMessage(HttpMethod.Get, "https://graph.microsoft.com/beta/me"))
+            {
+                requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                using (var response = await client.SendAsync(requestMessage))
+                {
+                    profile = JObject.Parse(await response.Content.ReadAsStringAsync());
+                }
+            }
+
             return profile;
         }
 
@@ -178,13 +183,16 @@ namespace AzureADAuthModule
                     };
 
             var content = new FormUrlEncodedContent(values);
-            HttpResponseMessage response;
+
+            string accessToken = null;
+
+            using (var response = await client.PostAsync($"https://login.microsoftonline.com/{TenantId}/oauth2/v2.0/token", content))
+            {
+                var sJSON = await response.Content.ReadAsStringAsync();
+                JObject r = JObject.Parse(sJSON);
+                accessToken = r["access_token"].Value<string>();
+            }
             
-            response = await client.PostAsync($"https://login.microsoftonline.com/{TenantId}/oauth2/v2.0/token", content);
-            
-            var sJSON = await response.Content.ReadAsStringAsync();
-            JObject r = JObject.Parse(sJSON);
-            string accessToken = r["access_token"].Value<string>();
             return accessToken;
         }
 
