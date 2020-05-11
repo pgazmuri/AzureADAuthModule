@@ -38,7 +38,4 @@ Note that this module requires session state, so you may also need something lik
 
 NOTE: This module is not production ready and is a proof-of-concept only.  It should be updated with the following to be minimally viable in production:
 
-Remove GetAwaiter().GetResult() from async method invocations and make async "all the way down".
-Enforce login expiration (this can also be managed through session expiration settings if you wish)
-Add Error Handling and check for edge conditions
 Add logging / telemetry

@@ -1,6 +1,7 @@
 ﻿using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
+using System.Configuration;
 using System.Diagnostics;
 using System.Linq;
 using System.Net;
@@ -8,7 +9,9 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
 using System.Security;
+using System.Security.Claims;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
 using System.Web.SessionState;
@@ -19,6 +22,8 @@ namespace AzureADAuthModule
     public class AzureADAuthShim : System.Web.IHttpModule, IRequiresSessionState
     {
         private const string SessionVariableName = "AzureADAuthShim_Identity";
+        private const string SessionVariableNameForAccessToken = "AzureADAuthShim_Identity_Token";
+        private const string SessionVariableNameForGroupMembership = "AzureADAuthShim_Identity_Groups";
         private static string TenantId;
         private static string ClientId;
         private static string ClientSecret;
@@ -60,6 +65,8 @@ namespace AzureADAuthModule
         //Wrapper function to enable async Task as IAsyncResult
         public IAsyncResult BeginPreRequestHandlerExecute(object sender, EventArgs e, AsyncCallback callback, object state)
         {
+            //Not sure why I can't just return the Task returned from calling Context_PreRequestHandlerExecuteAsync();
+            //but the working example I found did this, so not going to question what is working...
             var tcs = new TaskCompletionSource<object>(state);
             var task = Context_PreRequestHandlerExecuteAsync();
             task.ContinueWith(t =>
@@ -93,7 +100,7 @@ namespace AzureADAuthModule
                 if (context.Session[SessionVariableName] != null)
                 {
                     //we are already logged in with session variable set... ensure the header is applied and return;
-                    SetHeaderFromSession();
+                    SetRequestContextForUser();
                     return;
                 }
                 
@@ -114,12 +121,16 @@ namespace AzureADAuthModule
                     if (HttpContext.Current.Request.QueryString["code"] != null)
                     {
                         string accessToken = await GetAccessToken();
-                        JObject profile = await GetProfile(accessToken);
+                        var profileTask = GetProfile(accessToken);
+                        var memberTask = GetRoles(accessToken);
 
+                        await Task.WhenAll(profileTask, memberTask);
 
-                        //get UPN and set in session
-                        context.Session[SessionVariableName] = profile[ADPropertyName].Value<string>();
-                        SetHeaderFromSession();
+                        //set the profile object in the user's session
+                        context.Session[SessionVariableName] = profileTask.Result;
+                        context.Session[SessionVariableNameForGroupMembership] = memberTask.Result;
+                        context.Session[SessionVariableNameForAccessToken] = accessToken;
+                        SetRequestContextForUser();
 
                         //redirect to "state"
                         context.Response.Redirect(HttpContext.Current.Request.QueryString["state"]);
@@ -149,9 +160,33 @@ namespace AzureADAuthModule
             }
         }
 
-        private static void SetHeaderFromSession()
+        private static void SetRequestContextForUser()
         {
-            HttpContext.Current.Request.Headers[HttpHeaderName] = HttpContext.Current.Session[SessionVariableName].ToString();
+            var profile = (HttpContext.Current.Session[SessionVariableName] as JObject);
+            var memberships = (HttpContext.Current.Session[SessionVariableNameForGroupMembership] as IEnumerable<string>);
+            HttpContext.Current.Request.Headers[HttpHeaderName] = profile[ADPropertyName].Value<string>();
+            List<Claim> claims = new List<Claim>();
+            foreach (var property in profile.Properties()) {
+                var propertyValue = property.Value;
+                if(propertyValue != null && 
+                    (propertyValue.Type == JTokenType.String || 
+                    propertyValue.Type == JTokenType.Integer || 
+                    propertyValue.Type == JTokenType.Float || 
+                    propertyValue.Type == JTokenType.Date || 
+                    propertyValue.Type == JTokenType.Guid ||
+                    propertyValue.Type == JTokenType.Boolean))
+                {
+                    claims.Add(new Claim(property.Name, property.Value.ToString()));
+                }
+            }
+            foreach(var role in memberships)
+            {
+                claims.Add(new Claim("role", role));
+            }
+            var identity = new ClaimsIdentity(claims, "openid", "displayName", "role");
+            var principal = new ClaimsPrincipal(identity);
+            HttpContext.Current.User = principal;
+            Thread.CurrentPrincipal = principal;
         }
 
         private static async Task<JObject> GetProfile(string accessToken)
@@ -168,6 +203,27 @@ namespace AzureADAuthModule
             }
 
             return profile;
+        }
+
+        private static async Task<IEnumerable<string>> GetRoles(string accessToken)
+        {
+            List<string> groups = new List<string>();
+
+            using (var requestMessage = new HttpRequestMessage(HttpMethod.Get, "https://graph.microsoft.com/beta/me/memberOf"))
+            {
+                requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                using (var response = await client.SendAsync(requestMessage))
+                {
+                    var result = JObject.Parse(await response.Content.ReadAsStringAsync());
+                    var roles = result.Value<JArray>("value");
+                    foreach(JObject obj in roles)
+                    {
+                        groups.Add(obj.Value<string>("id"));
+                    }
+                }
+            }
+
+            return groups;
         }
 
         private static async Task<string> GetAccessToken()
